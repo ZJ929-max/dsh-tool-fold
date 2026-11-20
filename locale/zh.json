@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "低频工具折叠",
+    "description": "把用不到的工具收成「名字 + 一句话」，不再占用上下文；需要时用 tool_fold 取回。",
+    "detail": "docs/DETAIL.md"
+  }
+}

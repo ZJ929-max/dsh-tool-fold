@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Fold unused tools",
+    "description": "Collapses low-frequency tools into a name plus one sentence so they stop costing context; tool_fold brings one back on demand.",
+    "detail": "docs/DETAIL.md"
+  }
+}

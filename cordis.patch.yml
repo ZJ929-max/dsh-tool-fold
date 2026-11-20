@@ -1,0 +1,6 @@
+# dsh-tool-fold —— 低频工具折叠
+- insert:
+    - id: tool-fold
+      name: dsh-tool-fold
+      config:
+        enabled: true

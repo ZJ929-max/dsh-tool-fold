@@ -18,7 +18,7 @@
 ## 安装
 
 ```bash
-dsh plugin --profile <profile> add <this-repo-or-tarball>
+dsh plugin --profile <profile> add git+https://github.com/ZJ929-max/dsh-tool-fold.git
 ```
 
 或把它作为本地目录安装：

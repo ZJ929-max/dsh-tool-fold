@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-fold",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "把低频工具折叠成「名字 + 一句话」，需要时用 tool_fold 取回。按会话隔离、带真实计量、只用 deny 过滤。",
   "license": "MPL-2.0",
   "type": "module",

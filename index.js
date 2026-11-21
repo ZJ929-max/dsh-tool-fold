@@ -161,55 +161,81 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  const applyTo = (agent) => {
+  const sameSet = (a, b) => a.length === b.length && a.every((x, i) => x === b[i])
+
+  /** 限制还生效吗？随便挑一个被折的名字，看得见就说明它被解除了 */
+  const restrictionActive = (agent, deny) => {
+    if (deny.length === 0) return true
+    try {
+      return agent?.ctx?.tools?.get?.(deny[0]) === undefined
+    } catch {
+      return true
+    }
+  }
+
+  const ensureRestriction = (agent) => {
     const key = agent?.id ?? agent
-    const rec = sessions.get(key) ?? { agent, dispose: null, loaded: new Set() }
+    let rec = sessions.get(key)
+    if (!rec) {
+      rec = { agent, dispose: null, loaded: new Set(), deny: [], hooked: false }
+      sessions.set(key, rec)
+    }
     rec.agent = agent
     buildCatalog(agent)
 
-    if (rec.dispose) {
+    const deny = [...catalog.keys()].filter((name) => !rec.loaded.has(name))
+
+    // 快路径：集合没变、限制仍在 → 一个字节都不动。
+    // 每一步都调用它，靠这里挡住「无谓的重建」，避免制造缓存抖动。
+    if (sameSet(deny, rec.deny) && restrictionActive(agent, deny)) return
+
+    // 先把新的装上，成功之后才拆旧的。
+    // v0.2.0 是「先拆后建」：建失败就只剩拆 —— 工具被放出来、下一轮又装回去，来回抖。
+    let next = null
+    if (deny.length > 0 && agent?.ctx?.tools?.restrict) {
       try {
-        rec.dispose()
+        const d = agent.ctx.tools.restrict({ deny })
+        next = typeof d === 'function' ? d : null
+      } catch {
+        next = null
+      }
+    }
+
+    const prev = rec.dispose
+    if (typeof prev === 'function') {
+      try {
+        prev()
       } catch {
         /* 旧的限制可能已随 agent 一起没了 */
       }
-      rec.dispose = null
     }
+    rec.dispose = next
+    rec.deny = deny
 
-    const deny = [...catalog.keys()].filter((name) => !rec.loaded.has(name))
-    if (deny.length > 0 && agent?.ctx?.tools?.restrict) {
-      try {
-        const dispose = agent.ctx.tools.restrict({ deny })
-        if (typeof dispose === 'function') {
-          rec.dispose = dispose
-          // 解除函数必须挂在本插件的 effect 上，否则禁用插件时限制会泄漏，
-          // 工具被永久遮住、只能重启才回来（v0.1 的真实 bug）。
-          ctx.effect(() => () => {
-            try {
-              rec.dispose?.()
-            } catch {
-              /* 已随 agent 一起没了 */
-            }
-          })
+    // 解除函数必须挂在本插件的 effect 上，否则禁用插件时限制会泄漏，
+    // 工具被永久遮住、只能重启才回来（v0.1 的真实 bug）。
+    if (!rec.hooked) {
+      rec.hooked = true
+      ctx.effect(() => () => {
+        try {
+          rec.dispose?.()
+        } catch {
+          /* 已随 agent 一起没了 */
         }
-      } catch {
         rec.dispose = null
-      }
+      })
     }
-    sessions.set(key, rec)
   }
 
-  // 只在**这个会话的第一步**施加一次，之后整场不再动。
-  // 工具清单在请求最前面，中途增删会让整个前缀缓存作废。
+  // 每一步都检查一次，但只有两种情况会真的动工具表：
+  //   1) 本会话第一次见（首次施加）
+  //   2) 限制被别人解除了，或 load 改了集合
+  // 其余情况走快路径，不碰工具表 —— 否则每轮都重建，前缀缓存就会一直抖。
   ctx.on('agent/pre-step', (payload, next) => {
     const agent = payload?.agent
     if (agent) {
-      const key = agent?.id ?? agent
-      lastKey = key
-      if (!sessions.has(key)) {
-        buildCatalog(agent)
-        applyTo(agent)
-      }
+      lastKey = agent?.id ?? agent
+      ensureRestriction(agent)
     }
     return next()
   })
@@ -268,7 +294,7 @@ export function apply(ctx, config = {}) {
         if (!current) return { text: '✗ 还没有活动会话，取回失败' }
         if (current.loaded.has(name)) return { text: `「${name}」本会话已经取回了。` }
         current.loaded.add(name)
-        applyTo(current.agent)
+        ensureRestriction(current.agent)
         return { text: `✓ 「${name}」已取回，下一轮开始可直接调用。` }
       }
 

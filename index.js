@@ -16,9 +16,9 @@
  *  4. 缓存纪律：每个会话只在第一步定型一次，中途绝不增删
  */
 
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 /** 这些名字无论配置怎么写都不会被折叠 */
 const NEVER_FOLD = new Set([
@@ -110,6 +110,44 @@ const DEFAULT_FOLD = [
 
 const CONFIG_PATH = join(homedir(), '.dsh', 'tool-fold.json')
 
+/**
+ * 使用账本。
+ *
+ * 上游 toolprune 的规则是「一个工具只要被真正调用过，就永久不再提议裁掉」
+ * （"one ever seen in use is never proposed"、"a single use protects it for good"），
+ * 而且他们的决定**从下一个会话开始生效**，绝不在会话中途改工具表。
+ *
+ * 我们的 load 是内存态：会话一结束就清零，于是「每个会话都要用的工具」每个
+ * 会话都得重新 load 一遍 —— 用户看到的就是「装回来、又被折回去」。所以这里
+ * 把使用记录落到磁盘，下一次加载时不再折叠它。
+ */
+const STATE_PATH = (() => {
+  const override = process.env.TOOL_FOLD_STATE
+  if (typeof override === 'string' && override.trim() !== '') return override
+  return join(homedir(), '.dsh', 'tool-fold-state.json')
+})()
+
+function readState() {
+  try {
+    const parsed = JSON.parse(readFileSync(STATE_PATH, 'utf8'))
+    if (!parsed || typeof parsed !== 'object') return { used: {} }
+    return { ...parsed, used: parsed.used && typeof parsed.used === 'object' ? parsed.used : {} }
+  } catch {
+    return { used: {} }
+  }
+}
+
+function writeState(state) {
+  try {
+    mkdirSync(dirname(STATE_PATH), { recursive: true })
+    const tmp = `${STATE_PATH}.tmp-${process.pid}`
+    writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8')
+    renameSync(tmp, STATE_PATH)
+  } catch {
+    /* 记账失败绝不能影响会话 */
+  }
+}
+
 /** 读用户配置文件；坏了就当没有，绝不让插件起不来。 */
 function readUserConfig() {
   try {
@@ -145,9 +183,42 @@ export function apply(ctx, config = {}) {
 
   const list = Array.isArray(merged.fold) && merged.fold.length > 0 ? merged.fold : DEFAULT_FOLD
   const keep = new Set(Array.isArray(merged.keep) ? merged.keep : [])
-  const folded = new Set(
+  /** 配置里所有允许折叠的名字（还没扣掉「用过」的） */
+  const watch = new Set(
     list.filter((name) => typeof name === 'string' && !NEVER_FOLD.has(name) && !keep.has(name)),
   )
+
+  const state = readState()
+  /** 用过一次就永久免折 —— 上游的口径，跨会话保留 */
+  const graduated = new Set([...watch].filter((name) => Number(state.used?.[name] ?? 0) > 0))
+  const folded = new Set([...watch].filter((name) => !graduated.has(name)))
+
+  let dirty = false
+  const flushState = () => {
+    if (!dirty) return
+    dirty = false
+    writeState(state)
+  }
+  const recordUse = (name) => {
+    if (typeof name !== 'string' || !watch.has(name)) return
+    state.used[name] = (state.used[name] ?? 0) + 1
+    if (!state.lastUsedAt || typeof state.lastUsedAt !== 'object') state.lastUsedAt = {}
+    state.lastUsedAt[name] = Date.now()
+    dirty = true
+    // 第一次用立刻落盘（这决定下一个会话折不折它），之后每 20 次合并写一次
+    if (state.used[name] === 1 || state.used[name] % 20 === 0) flushState()
+  }
+
+  // 只在「这一步真的调用了某个被折叠名单里的工具」时记账。
+  // 记账不改当前会话的工具表：与上游一致，生效从下一个会话开始。
+  ctx.on('tools/result', (exec) => {
+    try {
+      recordUse(exec?.name)
+    } catch {
+      /* 观察者不能让工具调用失败 */
+    }
+  })
+  ctx.effect(() => () => flushState())
 
   /** 名字 → { desc, bytes }，在限制生效前抓（之后 get() 读不到） */
   const catalog = new Map()
@@ -319,6 +390,7 @@ export function apply(ctx, config = {}) {
           text:
             `折叠 ${catalog.size} 个工具，省下约 ${bytes} 字节（≈${tokens} token）。` +
             `本会话已取回 ${loadedNow} 个，工具表重装 ${rec ? rec.reinstalls : 0} 次。` +
+            `已因用过永久免折 ${graduated.size} 个。` +
             (rec?.lastError ? `⚠ 上次安装失败：${rec.lastError}` : '') +
             (stuck.length === 0 ? '恢复入口完好。' : `⚠ 有 ${stuck.length} 个不可恢复项：${stuck.join(', ')}`) +
             `配置来源：${CONFIG_PATH}（可缺省）。`,

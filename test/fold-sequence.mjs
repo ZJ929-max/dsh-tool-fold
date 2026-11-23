@@ -75,6 +75,13 @@ function check(label, fn) {
   catch (e) { console.log('FAIL ' + label + '\n     ' + (e instanceof Error ? e.message : String(e))); process.exitCode = 1 }
 }
 
+// 使用账本必须写到临时文件，别碰用户真实的 ~/.dsh/tool-fold-state.json
+const os = await import('node:os')
+const fs = await import('node:fs')
+const path = await import('node:path')
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tool-fold-'))
+process.env.TOOL_FOLD_STATE = path.join(tmp, 'state.json')
+
 const { apply } = await import('../index.js')
 
 const { ctx, handlers, getTool } = makeCtx()
@@ -145,6 +152,32 @@ const status = await tool.execute({ action: 'status' }, { agent })
 check('status 摊开重装次数与已取回数量', () => {
   assert.match(status.text, /工具表重装 \d+ 次/)
   assert.match(status.text, /本会话已取回 1 个/)
+})
+
+/* ---------- 上游口径：用过一次就永久免折，且从下一个会话生效 ---------- */
+check('工具真被调用后，使用账本落盘', () => {
+  const useHandler = handlers.get('tools/result')
+  assert.equal(typeof useHandler, 'function', '必须监听 tools/result')
+  useHandler({ name: 'a3' })
+  const saved = JSON.parse(fs.readFileSync(process.env.TOOL_FOLD_STATE, 'utf8'))
+  assert.equal(saved.used.a3, 1)
+})
+
+check('本会话内不因「用过」而改工具表（与上游一致：下次会话才生效）', () => {
+  assert.equal(tools.hidden().length, NAMES.length - 1, 'a1 已 load，a3 仍在本会话里折着')
+})
+
+const ctx2 = makeCtx()
+const tools2 = makeTools()
+apply(ctx2.ctx, { fold: NAMES })
+const agent2 = { id: 'session-C', ctx: { tools: tools2 } }
+ctx2.handlers.get('agent/pre-step')({ agent: agent2 }, () => {})
+const status2 = await ctx2.getTool().execute({ action: 'status' }, { agent: agent2 })
+
+check('下一个会话不再折叠用过的工具', () => {
+  assert.equal(tools2.hidden().length, NAMES.length - 1, 'a3 应该免折，其余仍折')
+  assert.notEqual(tools2.get('a3'), undefined, 'a3 应直接可见，不需要再 load')
+  assert.match(status2.text, /已因用过永久免折 1 个/)
 })
 
 console.log('\n' + passed + ' checks passed')

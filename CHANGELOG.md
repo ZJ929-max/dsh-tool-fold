@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0
+
+对齐上游 `microsoft/TokenEconomizer` 的 `toolprune` 口径。读它的 README 原文有两句是决定性的：
+
+> "one **ever seen in use** is never proposed" / "a single use protects it for good"
+> "Writing the decision into an agent's own settings file … either way it **takes effect from the next session**."
+
+也就是说：**裁剪是会话边界上的决定，不是回合里的动作；而且用过一次就永久免裁。**
+
+- **用过就永久免折（新）**：监听 `tools/result`，把「某工具被真正调用过」记进 `~/.dsh/tool-fold-state.json`（可用 `TOOL_FOLD_STATE` 覆盖路径）。下一次加载时这些名字不再折叠 —— 以前 `load` 是内存态，会话一结束清零，于是每个会话都要用的工具每个会话都得重新 load 一次，正是「装回来又被折回去」的跨会话版本。
+- **生效时机与上游一致**：记账**不改当前会话的工具表**，从下一个会话开始生效。
+- **状态可查、可重置**：`status` 多报一行「已因用过永久免折 N 个」；删掉状态文件即恢复全部折叠。
+- **测试扩到 10 项**：新增跨会话免折、状态落盘、「本会话内不因用过而改表」三项。
+
 ## 0.2.2
 
 - **补上 0.2.1 承诺却没写进代码的那一步**：0.2.1 的说明写着「任何一步失败都不会把已折叠的集合放开」，但代码里 `restrict()` 抛错时只是把 `next` 置空，**并没有提前 return**，紧接着照样 dispose 掉上一份限制。结果就是限制被拆光、工具全露出来，下一轮再装回去 —— 用户看到的 `+28 / −28` 交替。现在失败分支直接返回，旧限制原样留着，下一轮再试。

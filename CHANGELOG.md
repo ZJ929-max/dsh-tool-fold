@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+（这里的改动累积到下个 checkpoint，不按提交升版本。见 docs/VERSIONING.md。）
+
 ## 0.3.0
 
 对齐上游 `microsoft/TokenEconomizer` 的 `toolprune` 口径。读它的 README 原文有两句是决定性的：

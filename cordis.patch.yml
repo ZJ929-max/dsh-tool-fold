@@ -1,6 +1,6 @@
-# dsh-tool-fold —— 低频工具折叠
+# dsh-lazy-tools —— 低频工具折叠（原名 dsh-tool-fold）
 - insert:
-    - id: tool-fold
-      name: dsh-tool-fold
+    - id: lazy-tools
+      name: dsh-lazy-tools
       config:
         enabled: true

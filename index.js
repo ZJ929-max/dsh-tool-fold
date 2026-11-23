@@ -3,7 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * dsh-tool-fold v0.2.0 — 把用不到的工具收成「一行名字 + 一句描述」。
+ * dsh-lazy-tools（原型）— 把用不到的工具收成「一行名字 + 一句描述」。
+ * 原名 dsh-tool-fold；改名是为了把版本号按新方案从 0.0.1 重新起算。
  *
  * 机制：ctx.tools.restrict({ deny }) 是 DSH 自带的按作用域可见性过滤。
  * 只能作用在**某个 agent 的作用域**上（宿主拒绝全局限制，否则会一次遮住所有 agent），
@@ -108,7 +109,9 @@ const DEFAULT_FOLD = [
   'user_terminal_read',
 ]
 
-const CONFIG_PATH = join(homedir(), '.dsh', 'tool-fold.json')
+const CONFIG_PATH = join(homedir(), '.dsh', 'lazy-tools.json')
+/** 改名前的配置文件；读不到新文件时回退，别让用户重新配一遍 */
+const LEGACY_CONFIG_PATH = join(homedir(), '.dsh', 'tool-fold.json')
 
 /**
  * 使用账本。
@@ -122,19 +125,25 @@ const CONFIG_PATH = join(homedir(), '.dsh', 'tool-fold.json')
  * 把使用记录落到磁盘，下一次加载时不再折叠它。
  */
 const STATE_PATH = (() => {
-  const override = process.env.TOOL_FOLD_STATE
+  const override = process.env.LAZY_TOOLS_STATE ?? process.env.TOOL_FOLD_STATE
   if (typeof override === 'string' && override.trim() !== '') return override
-  return join(homedir(), '.dsh', 'tool-fold-state.json')
+  return join(homedir(), '.dsh', 'lazy-tools-state.json')
 })()
+/** 改名前的账本；新文件不存在时读它，免得「用过免折」的记录白丢一次 */
+const LEGACY_STATE_PATH = join(homedir(), '.dsh', 'tool-fold-state.json')
 
 function readState() {
-  try {
-    const parsed = JSON.parse(readFileSync(STATE_PATH, 'utf8'))
-    if (!parsed || typeof parsed !== 'object') return { used: {} }
-    return { ...parsed, used: parsed.used && typeof parsed.used === 'object' ? parsed.used : {} }
-  } catch {
-    return { used: {} }
+  const candidates = STATE_PATH === LEGACY_STATE_PATH ? [STATE_PATH] : [STATE_PATH, LEGACY_STATE_PATH]
+  for (const file of candidates) {
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8'))
+      if (!parsed || typeof parsed !== 'object') continue
+      return { ...parsed, used: parsed.used && typeof parsed.used === 'object' ? parsed.used : {} }
+    } catch {
+      /* 换下一个 */
+    }
   }
+  return { used: {} }
 }
 
 function writeState(state) {
@@ -150,12 +159,15 @@ function writeState(state) {
 
 /** 读用户配置文件；坏了就当没有，绝不让插件起不来。 */
 function readUserConfig() {
-  try {
-    const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch {
-    return {}
+  for (const file of [CONFIG_PATH, LEGACY_CONFIG_PATH]) {
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8'))
+      if (parsed && typeof parsed === 'object') return parsed
+    } catch {
+      /* 换下一个；都没有就当没配置 */
+    }
   }
+  return {}
 }
 
 const clip = (text, n) => {

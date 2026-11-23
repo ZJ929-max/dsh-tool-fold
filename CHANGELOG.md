@@ -2,7 +2,13 @@
 
 ## Unreleased
 
-（这里的改动累积到下个 checkpoint，不按提交升版本。见 docs/VERSIONING.md。）
+（改动累积在这里，不按提交升版本。见 docs/VERSIONING.md。）
+
+## 0.0.1-re1
+
+- **改名**：`dsh-tool-fold` → **`dsh-lazy-tools`**；patch id `tool-fold` → `lazy-tools`。配置文件 `~/.dsh/lazy-tools.json`、使用账本 `~/.dsh/lazy-tools-state.json`；找不到新文件时**回退读旧路径**，不用重新配、也不会丢「用过免折」的记录。
+- **版本归零**：`0.3.0` → `0.0.1-re1`。旧 0.1/0.2/0.3 留在旧名下，不篡改历史；新方案见 `docs/VERSIONING.md`（日常只涨 `-reX`，checkpoint 才涨 `0.0.N`，`0.1.0` 留给外人真在跑）。
+- **发版脚本**：`scripts/release.mjs` 按新方案升号/收尾，并打印整合包的钉点行。
 
 ## 0.3.0
 

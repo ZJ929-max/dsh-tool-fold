@@ -1,4 +1,6 @@
-# dsh-tool-fold
+# dsh-lazy-tools（原型）
+
+> 原名 `dsh-tool-fold`。版本号已按新方案从 `0.0.1-re1` 重新起算，旧的 `0.1/0.2/0.3` 留在旧名下不再使用；规则见 [docs/VERSIONING.md](docs/VERSIONING.md)。
 
 把用不到的工具收成「一行名字 + 一句话」，需要时 `load` 回来。
 
@@ -49,7 +51,7 @@ tool_fold({action:"status"})                # 折叠数 / 省下字节 / 估算 
         keep: []        # 从默认名单里豁免
 ```
 
-`enabled: false` 完全关闭，工具恢复原状。
+`enabled: false` 完全关闭，工具恢复原状。配置文件名是 `~/.dsh/lazy-tools.json`（旧的 `tool-fold.json` 仍会被读取）。
 
 ## 三条重要的边界
 

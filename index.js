@@ -30,6 +30,8 @@ const NEVER_FOLD = new Set([
   'glob',
   'grep',
   'read_image',
+  // view_image 是 read_image 的兜底，折了会让「读图失败」没有下一步
+  'view_image',
   'ask_user_question',
   'todo_write',
   'present',
@@ -78,6 +80,10 @@ const DEFAULT_FOLD = [
   'cu_cursor',
   'cu_clipboard',
   'cu_window_info',
+  // 整合包自己的低频工具：B 站只在被问到时读
+  'bili_search',
+  'bili_video',
+  'bili_comments',
   // 其他
   'create_worktree',
   'plugin_market',
@@ -163,21 +169,39 @@ export function apply(ctx, config = {}) {
 
   const sameSet = (a, b) => a.length === b.length && a.every((x, i) => x === b[i])
 
-  /** 限制还生效吗？随便挑一个被折的名字，看得见就说明它被解除了 */
+  /**
+   * 限制还生效吗？
+   *
+   * v0.2.1 只抽查 deny[0]：那一个名字若恰好被 scope 里别的限制挡住，
+   * 就会被误判成「我们的限制还在」，于是永远不再重装。这里逐个核对 ——
+   * 几十次内存查表，换一个不会说假话的判断。
+   */
   const restrictionActive = (agent, deny) => {
     if (deny.length === 0) return true
     try {
-      return agent?.ctx?.tools?.get?.(deny[0]) === undefined
+      const tools = agent?.ctx?.tools
+      if (!tools?.get) return true
+      for (const name of deny) {
+        if (tools.get(name) !== undefined) return false
+      }
+      return true
     } catch {
+      // 查不出来就当「还在」：宁可少装一次，也不要在不确定时拆限制
       return true
     }
   }
 
-  const ensureRestriction = (agent) => {
+  /**
+   * 施加/更新限制。三条硬规则：
+   *  1) 装不上（restrict 抛错）就**什么都不拆**，保持上一份，记下原因下轮再试；
+   *  2) 只有新限制确认装上了，才拆旧的；
+   *  3) 真正改动工具表的次数记进 rec.reinstalls，由 status 摊开，抖动可观测。
+   */
+  const ensureRestriction = (agent, { force = false } = {}) => {
     const key = agent?.id ?? agent
     let rec = sessions.get(key)
     if (!rec) {
-      rec = { agent, dispose: null, loaded: new Set(), deny: [], hooked: false }
+      rec = { agent, dispose: null, loaded: new Set(), deny: [], hooked: false, reinstalls: 0, lastError: null }
       sessions.set(key, rec)
     }
     rec.agent = agent
@@ -187,18 +211,30 @@ export function apply(ctx, config = {}) {
 
     // 快路径：集合没变、限制仍在 → 一个字节都不动。
     // 每一步都调用它，靠这里挡住「无谓的重建」，避免制造缓存抖动。
-    if (sameSet(deny, rec.deny) && restrictionActive(agent, deny)) return
+    if (!force && sameSet(deny, rec.deny) && restrictionActive(agent, deny)) return
 
-    // 先把新的装上，成功之后才拆旧的。
-    // v0.2.0 是「先拆后建」：建失败就只剩拆 —— 工具被放出来、下一轮又装回去，来回抖。
     let next = null
-    if (deny.length > 0 && agent?.ctx?.tools?.restrict) {
-      try {
-        const d = agent.ctx.tools.restrict({ deny })
-        next = typeof d === 'function' ? d : null
-      } catch {
-        next = null
+    let failure = null
+    if (deny.length > 0) {
+      if (!agent?.ctx?.tools?.restrict) {
+        failure = new Error('当前 scope 没有 tools.restrict，无法折叠')
+      } else {
+        try {
+          const d = agent.ctx.tools.restrict({ deny })
+          if (typeof d === 'function') next = d
+          else failure = new Error('restrict() 没有返回解除函数')
+        } catch (error) {
+          failure = error instanceof Error ? error : new Error(String(error))
+        }
       }
+    }
+
+    // 装不上就到此为止：旧限制原样留着，下一轮再试。
+    // 以前这里会继续往下走、把旧的 dispose 掉 —— 限制被拆光、工具全露出来、
+    // 下一轮再装回去，就是「拆了又装」那种来回抖的来源。
+    if (failure) {
+      rec.lastError = String(failure.message ?? failure).slice(0, 200)
+      return
     }
 
     const prev = rec.dispose
@@ -211,6 +247,8 @@ export function apply(ctx, config = {}) {
     }
     rec.dispose = next
     rec.deny = deny
+    rec.lastError = null
+    rec.reinstalls += 1
 
     // 解除函数必须挂在本插件的 effect 上，否则禁用插件时限制会泄漏，
     // 工具被永久遮住、只能重启才回来（v0.1 的真实 bug）。
@@ -245,7 +283,7 @@ export function apply(ctx, config = {}) {
   const tool = {
     name: 'tool_fold',
     description:
-      '本会话把一批低频工具折叠成了「只有名字和一句话」的形式以省上下文（远程主机 / 团队任务 / 定时任务 / 子代理编排 / 低频桌面控制）。' +
+      '本会话把一批低频工具折叠成了「只有名字和一句话」的形式以省上下文（远程主机 / 团队任务 / 定时任务 / 子代理编排 / 低频桌面控制 / B 站只读）。' +
       '需要其中某个时：先 action:"list" 看折叠了什么，再 action:"load" + name 取回来（下一轮可用，之后就与普通工具无异地调用）。',
     parameters: {
       type: 'object',
@@ -280,7 +318,8 @@ export function apply(ctx, config = {}) {
         return {
           text:
             `折叠 ${catalog.size} 个工具，省下约 ${bytes} 字节（≈${tokens} token）。` +
-            `本会话已取回 ${loadedNow} 个。` +
+            `本会话已取回 ${loadedNow} 个，工具表重装 ${rec ? rec.reinstalls : 0} 次。` +
+            (rec?.lastError ? `⚠ 上次安装失败：${rec.lastError}` : '') +
             (stuck.length === 0 ? '恢复入口完好。' : `⚠ 有 ${stuck.length} 个不可恢复项：${stuck.join(', ')}`) +
             `配置来源：${CONFIG_PATH}（可缺省）。`,
         }
@@ -290,11 +329,14 @@ export function apply(ctx, config = {}) {
         const name = String(args?.name ?? '').trim()
         if (!name) return { text: '✗ 需要 name' }
         if (!catalog.has(name)) return { text: `✗ 「${name}」不在折叠清单里（没被折叠，或者不存在）` }
-        const current = sessions.get(lastKey)
+        // 必须用调用方会话：并发时 lastKey 会被另一个会话覆盖（v0.2.1 真实 bug）
+        const current = sessions.get(callerKey)
         if (!current) return { text: '✗ 还没有活动会话，取回失败' }
         if (current.loaded.has(name)) return { text: `「${name}」本会话已经取回了。` }
         current.loaded.add(name)
-        ensureRestriction(current.agent)
+        // 只记账，不在回合中途改工具表：真正的重装交给下一次 pre-step。
+        // 回合中途 restrict/dispose，会让「这一轮」和「下一轮」看到的工具表不一样，
+        // 用户看到的就是「加载一半又被移除」。
         return { text: `✓ 「${name}」已取回，下一轮开始可直接调用。` }
       }
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **暂停更新**：功能已并入 `tokeneconomizer-dsh` 0.3.0（`lib/fold.js` + `fold`/`unfold` action + 8 项时序自测）。独立版本不再发新特性，只保留历史。
+
 （改动累积在这里，不按提交升版本。见 docs/VERSIONING.md。）
 
 ## 0.0.1-re1

@@ -1,4 +1,6 @@
-# dsh-lazy-tools（原型）
+# dsh-lazy-tools（原型 · 已合并，暂缓更新）
+
+> **本仓库暂停更新。** 功能已并入同作者的 [tokeneconomizer-dsh](https://github.com/ZJ929-max/tokeneconomizer-dsh)（0.3.0）：上游 TokenEconomizer 本来就有 `toolprune` 模块，合并后从「只给裁剪建议」拓展成「真的折叠 + 按需取回」。装那个插件即可，本仓库保留作为历史与实现参考。
 
 > 原名 `dsh-tool-fold`。版本号已按新方案从 `0.0.1-re1` 重新起算，旧的 `0.1/0.2/0.3` 留在旧名下不再使用；规则见 [docs/VERSIONING.md](docs/VERSIONING.md)。
 
